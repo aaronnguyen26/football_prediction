@@ -4,12 +4,22 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, mean_absolute_error
 from sklearn.preprocessing import LabelEncoder
 import xgboost as xgb
+from sklearn.calibration import CalibratedClassifierCV
 import os
 import warnings
 from scipy.stats import poisson
 
 # -----------------------------
-# 1. Load and Validate Match Data
+# 1. Suppress FutureWarning for CalibratedClassifierCV
+# -----------------------------
+warnings.filterwarnings(
+    "ignore",
+    message="The `cv='prefit'` option is deprecated",
+    category=FutureWarning
+)
+
+# -----------------------------
+# 2. Load and Validate Match Data
 # -----------------------------
 csv_files = [
     'footballprediction/epl_data/epl2024.csv',
@@ -42,7 +52,7 @@ df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
 df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
 
 # -----------------------------
-# 2. Load FBref Seasonal Team Stats
+# 3. Load FBref Seasonal Team Stats
 # -----------------------------
 fbref_data = {}
 fbref_dir = 'footballprediction/fbref_data'
@@ -104,7 +114,7 @@ for year in range(2017, 2025):
         print(f"❌ Failed to load FBref data for {year}: {e}")
 
 # -----------------------------
-# 3. Preprocess Match Data
+# 4. Preprocess Match Data
 # -----------------------------
 columns_needed = [
     'Date', 'Season', 'HomeTeam', 'AwayTeam', 'FTR', 'HS', 'AS', 'HST', 'AST',
@@ -113,7 +123,7 @@ columns_needed = [
 df = df[[col for col in columns_needed if col in df.columns]].dropna(subset=['FTR'])
 
 # -----------------------------
-# 4. Add FBref Features to Each Match
+# 5. Add FBref Features to Each Match
 # -----------------------------
 def add_fbref_features(row):
     season = row['Season']
@@ -130,7 +140,7 @@ def add_fbref_features(row):
             h_stats['xAG'], a_stats['xAG'], h_stats['npxG'], a_stats['npxG'], h_stats['CrdY']
         ])
     else:
-        # Fallback: use league medians
+        # Fallback: league medians
         return pd.Series([1.5, 1.2, 50.0, 700, 1.5, 1.2, 50.0, 700, 1.0, 1.0, 1.3, 1.3, 1.0])
 
 print("🔧 Adding FBref-enhanced features to match data...")
@@ -142,30 +152,48 @@ fbref_features = [
 df[fbref_features] = df.apply(add_fbref_features, axis=1)
 
 # -----------------------------
-# 5. Rolling Features (Form & Averages)
+# 6. Weighted Rolling Features (Exponential Decay)
 # -----------------------------
-def add_rolling_features(df, window=5):
+def weighted_rolling(series, window=5, alpha=0.2):
+    """
+    Compute exponentially weighted rolling average.
+    Recent games have higher weight.
+    """
+    weights = np.exp(-alpha * np.arange(window)[::-1])
+    weights /= weights.sum()  # Normalize
+    return series.rolling(window).apply(lambda x: (x * weights).sum(), raw=True)
+
+def add_rolling_features(df, window=5, alpha=0.2):
     df = df.copy()
-    stats = ['FTHG', 'FTAG']
+    stats = ['FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST', 'HC', 'AC', 'HY', 'HR']
+
     for stat in stats:
+        # Weighted rolling average for home team
         df[f'home_avg_{stat}'] = df.groupby('HomeTeam')[stat].transform(
-            lambda x: x.shift().rolling(window, min_periods=1).mean()
+            lambda x: weighted_rolling(x.shift(), window=window, alpha=alpha)
         )
+        # Weighted rolling average for away team
         df[f'away_avg_{stat}'] = df.groupby('AwayTeam')[stat].transform(
-            lambda x: x.shift().rolling(window, min_periods=1).mean()
+            lambda x: weighted_rolling(x.shift(), window=window, alpha=alpha)
         )
+        # Fill NaNs with league median
+        df[f'home_avg_{stat}'] = df[f'home_avg_{stat}'].fillna(df[stat].median())
+        df[f'away_avg_{stat}'] = df[f'away_avg_{stat}'].fillna(df[stat].median())
+
     # Form: 3 for win, 1 for draw, 0 for loss
     def rolling_form(results):
         points = results.map({'H': 3, 'D': 1, 'A': 0})
-        return points.shift().rolling(window, min_periods=1).sum()
-    df['home_form'] = df.groupby('HomeTeam')['FTR'].transform(rolling_form).fillna(0)
-    df['away_form'] = df.groupby('AwayTeam')['FTR'].transform(rolling_form).fillna(0)
+        return weighted_rolling(points.shift(), window=window, alpha=alpha)
+    
+    df['home_form'] = df.groupby('HomeTeam')['FTR'].transform(rolling_form).fillna(1)
+    df['away_form'] = df.groupby('AwayTeam')['FTR'].transform(rolling_form).fillna(1)
+
     return df
 
-df = add_rolling_features(df)
+df = add_rolling_features(df, window=5, alpha=0.2)
 
 # -----------------------------
-# 6. Team Encoding
+# 7. Team Encoding
 # -----------------------------
 all_teams = pd.unique(df[['HomeTeam', 'AwayTeam']].values.ravel('K'))
 le_team = LabelEncoder()
@@ -174,7 +202,7 @@ df['HomeTeam_enc'] = le_team.transform(df['HomeTeam'])
 df['AwayTeam_enc'] = le_team.transform(df['AwayTeam'])
 
 # -----------------------------
-# 7. Elo Rating System
+# 8. Elo Rating System
 # -----------------------------
 def calculate_elo(df, base_elo=1500, k=20, home_advantage=70):
     elos = {team: base_elo for team in all_teams}
@@ -201,12 +229,12 @@ def calculate_elo(df, base_elo=1500, k=20, home_advantage=70):
 df, final_elos = calculate_elo(df)
 
 # -----------------------------
-# 8. Target Encoding
+# 9. Target Encoding
 # -----------------------------
 df['FTR_enc'] = df['FTR'].map({'H': 0, 'D': 1, 'A': 2})
 
 # -----------------------------
-# 9. Final Feature Set
+# 10. Final Feature Set
 # -----------------------------
 feature_cols = [
     'HomeTeam_enc', 'AwayTeam_enc',
@@ -216,7 +244,7 @@ feature_cols = [
     'home_attack_xG', 'home_defense_xGA', 'home_possession', 'home_progression',
     'away_attack_xG', 'away_defense_xGA', 'away_possession', 'away_progression',
     'home_xAG', 'away_xAG', 'home_npxG', 'away_npxG', 'home_CrdY',
-    # Fallback rolling stats
+    # Weighted rolling stats
     'home_avg_FTHG', 'away_avg_FTAG', 'home_avg_FTAG', 'away_avg_FTHG'
 ]
 feature_cols = [col for col in feature_cols if col in df.columns]
@@ -226,7 +254,7 @@ score_y_home = df['FTHG']
 score_y_away = df['FTAG']
 
 # -----------------------------
-# 10. Time-Based Train/Test Split
+# 11. Time-Based Train/Test Split
 # -----------------------------
 split_year = 2022
 train_mask = df['Season'] <= split_year
@@ -245,36 +273,39 @@ score_y_away_train = score_y_away[train_mask]
 score_y_away_test = score_y_away[test_mask]
 
 if len(X_test) == 0:
-    print("⚠️ No test data found. Using random split.")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     score_X_train, score_X_test, score_y_home_train, score_y_home_test = train_test_split(X, score_y_home, test_size=0.2, random_state=42)
     _, _, score_y_away_train, score_y_away_test = train_test_split(X, score_y_away, test_size=0.2, random_state=42)
 
 # -----------------------------
-# 11. Model Training
+# 12. Model Training with Calibration
 # -----------------------------
-model = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1,
-                          random_state=42, use_label_encoder=False, eval_metric='mlogloss')
-model.fit(X_train, y_train)
+# Hold out part of training data for calibration
+calib_size = int(0.2 * len(X_train))
+X_calib = X_train[-calib_size:]
+y_calib = y_train[-calib_size:]
+X_train_fit = X_train[:-calib_size]
+y_train_fit = y_train[:-calib_size]
 
+# Train base model
+base_model = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=4,
+    learning_rate=0.1,
+    random_state=42,
+    eval_metric='mlogloss'
+)
+base_model.fit(X_train_fit, y_train_fit)
+
+# Calibrate probabilities
+model = CalibratedClassifierCV(base_model, method='isotonic', cv='prefit')
+model.fit(X_calib, y_calib)
+
+# Train goal models
 home_goal_model = xgb.XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
 away_goal_model = xgb.XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
 home_goal_model.fit(score_X_train, score_y_home_train)
 away_goal_model.fit(score_X_train, score_y_away_train)
-
-# -----------------------------
-# 12. Evaluation
-# -----------------------------
-y_pred = model.predict(X_test)
-print("=== Match Outcome Prediction ===")
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print(classification_report(y_test, y_pred, target_names=['Home Win', 'Draw', 'Away Win']))
-
-print("\n=== Goal Prediction (Regression) ===")
-hg_pred = home_goal_model.predict(score_X_test)
-ag_pred = away_goal_model.predict(score_X_test)
-print("Home Goal MAE:", mean_absolute_error(score_y_home_test, hg_pred))
-print("Away Goal MAE:", mean_absolute_error(score_y_away_test, ag_pred))
 
 # -----------------------------
 # 13. Prediction Helper Functions
@@ -293,8 +324,8 @@ def get_features_for_prediction(home_team, away_team, season):
     features.append(final_elos.get(away_team, 1500))
 
     # Form (latest)
-    home_form = df[df['HomeTeam'] == home_team]['home_form'].iloc[-1] if (df['HomeTeam'] == home_team).any() else 0
-    away_form = df[df['AwayTeam'] == away_team]['away_form'].iloc[-1] if (df['AwayTeam'] == away_team).any() else 0
+    home_form = df[df['HomeTeam'] == home_team]['home_form'].iloc[-1] if (df['HomeTeam'] == home_team).any() else 1
+    away_form = df[df['AwayTeam'] == away_team]['away_form'].iloc[-1] if (df['AwayTeam'] == away_team).any() else 1
     features.append(home_form)
     features.append(away_form)
 
@@ -345,7 +376,7 @@ def predict_match_proba(home_team, away_team, season=2024):
         home_goals_pred = max(0, home_goal_model.predict(features)[0])
         away_goals_pred = max(0, away_goal_model.predict(features)[0])
 
-    # Poisson scorelines
+    # Generate top scorelines using Poisson
     scores = []
     for h in range(6):
         for a in range(6):
@@ -354,7 +385,7 @@ def predict_match_proba(home_team, away_team, season=2024):
     scores.sort(key=lambda x: -x[2])
     top3_poisson = scores[:3]
 
-    # H2H historical scores
+    # Fallback: H2H historical scores
     h2h = df[(df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)]
     if len(h2h) > 0:
         h2h_scores = h2h.groupby(['FTHG', 'FTAG']).size().reset_index(name='count')
@@ -366,7 +397,7 @@ def predict_match_proba(home_team, away_team, season=2024):
     return proba, top3_poisson[0], top3_poisson, top3_h2h, home_goals_pred, away_goals_pred
 
 # -----------------------------
-# 15. Interactive CLI (Fully Functional)
+# 15. Interactive CLI (Clean Output)
 # -----------------------------
 if __name__ == "__main__":
     print("\n" + "="*60)
@@ -428,5 +459,3 @@ if __name__ == "__main__":
 
         except Exception as e:
             print(f"❌ Error during prediction: {e}")
-            import traceback
-            traceback.print_exc()
