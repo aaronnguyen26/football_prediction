@@ -44,7 +44,14 @@ footballprediction/
 ├── fbref_data/ # Scraped team stats (scrapped_team_stats_*.csv)
 └── README.md
 
+---
 
+## 🚀 Getting Started
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/yourusername/epl-predictor.git
+cd epl-predictor
 
 
 
