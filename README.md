@@ -53,13 +53,15 @@ footballprediction/
 git clone https://github.com/yourusername/epl-predictor.git
 cd epl-predictor
 
-2. Set up virtual environment
+### 2. Set up virtual environment
+```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-3. Install dependencies
-pip install pandas numpy scikit-learn xgboost requests beautifulsoup4 lxml
+### 3. Install dependencies
 ```bash
+pip install pandas numpy scikit-learn xgboost requests beautifulsoup4 lxml
+
 
 
 
