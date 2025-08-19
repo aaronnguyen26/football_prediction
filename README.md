@@ -60,9 +60,9 @@ footballprediction/
    ```bash
    pip install pandas numpy scikit-learn xgboost requests beautifulsoup4 lxml
 4. **Prepare data**
-Ensure you have:
-Match data: epl_data/epl2017.csv → epl2024.csv
-FBref team stats: fbref_data/scrapped_team_stats_2017.csv → 2024.csv
+- Ensure you have:
+- Match data: epl_data/epl2017.csv → epl2024.csv
+- FBref team stats: fbref_data/scrapped_team_stats_2017.csv → 2024.csv
 
 
 
