@@ -64,7 +64,9 @@ footballprediction/
 - Match data: epl_data/epl2017.csv → epl2024.csv
 - FBref team stats: fbref_data/scrapped_team_stats_2017.csv → 2024.csv
 
-
+5. **Run the prediction model (CLI)**
+   ```bash
+   python prediction_model.py
 
 
 
