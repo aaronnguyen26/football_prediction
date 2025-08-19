@@ -35,3 +35,22 @@ Built with **Python, XGBoost**, this project combines data science and web devel
 - **Requests, lxml** – HTML fetching and parsing
 
 ---
+## 🗂️ Project Structure
+
+footballprediction/
+├── prediction_model.py # Core prediction logic
+├── fbref_scraper.py # Scrapes team stats from FBref
+├── epl_data/ # Match CSVs (epl2017.csv → epl2024.csv)
+├── fbref_data/ # Scraped team stats (scrapped_team_stats_*.csv)
+└── README.md
+
+
+
+
+
+
+
+
+
+
+
