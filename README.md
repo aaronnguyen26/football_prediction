@@ -78,3 +78,12 @@ footballprediction/
 | **Exponential Decay** | Older matches have less influence than recent performances |
 | **Elo + xG Fusion** | Combines traditional strength ratings with advanced shot-quality metrics |
 | **Poisson Score Simulation** | Generates realistic scoreline predictions using expected goals |
+
+## 📈 Future Enhancements
+
+- 🔹 Integrate **player-level xG** and injury data from external sources
+- 🔹 Add **weather conditions** (rain, cold) that affect play style
+- 🔹 Include **referee stats** (cards, penalty bias) as features
+- 🔹 Deploy dashboard online using **Streamlit Community Cloud**
+- 🔹 Add **betting odds comparison** to identify value bets
+- 🔹 Expand support to other leagues: **La Liga, Bundesliga, Serie A**
