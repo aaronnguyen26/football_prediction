@@ -25,3 +25,13 @@ Built with **Python, XGBoost**, this project combines data science and web devel
 | Away Goal MAE | ~0.91 |
 
 ---
+## 🛠️ Tech Stack
+
+- **Python** – Core logic
+- **Pandas, NumPy** – Data processing
+- **XGBoost** – Match outcome & goal prediction
+- **Scikit-learn** – Calibration, preprocessing
+- **BeautifulSoup** – Data scraping (FBref)
+- **Requests, lxml** – HTML fetching and parsing
+
+---
