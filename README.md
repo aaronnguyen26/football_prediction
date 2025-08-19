@@ -69,4 +69,12 @@ footballprediction/
    python prediction_model.py
 
 
+# 🔧 Key Improvements
 
+| Technique | Benefit |
+|--------|--------|
+| **Weighted Rolling Windows** | Recent form is weighted more heavily for better momentum tracking |
+| **Model Calibration** | Predicted probabilities are more reliable and less overconfident |
+| **Exponential Decay** | Older matches have less influence than recent performances |
+| **Elo + xG Fusion** | Combines traditional strength ratings with advanced shot-quality metrics |
+| **Poisson Score Simulation** | Generates realistic scoreline predictions using expected goals |
