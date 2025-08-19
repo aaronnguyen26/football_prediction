@@ -16,3 +16,12 @@ Built with **Python, XGBoost**, this project combines data science and web devel
 - ✅ **Calibrated probabilities** for more reliable confidence estimates
 - ✅ Head-to-head (H2H) stats and historical scorelines
 
+## 📊 Model Performance
+
+| Metric | Score |
+|-------|-------|
+| Accuracy (H/D/A) | ~54–58% |
+| Home Goal MAE | ~1.03 |
+| Away Goal MAE | ~0.91 |
+
+---
