@@ -87,3 +87,13 @@ footballprediction/
 - 🔹 Deploy dashboard online using **Streamlit Community Cloud**
 - 🔹 Add **betting odds comparison** to identify value bets
 - 🔹 Expand support to other leagues: **La Liga, Bundesliga, Serie A**
+
+## 📄 License
+
+This project is open source and available under the MIT License.  
+Feel free to use, modify, and share for personal or commercial projects.
+
+## 🙌 Acknowledgements
+
+- Data: [FBref](https://fbref.com) – For comprehensive football statistics
+- Tools: [Streamlit](https://streamlit.io), [XGBoost](https://xgboost.readthedocs.io), [Pandas](https://pandas.pydata.org)
