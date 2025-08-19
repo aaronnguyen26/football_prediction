@@ -54,7 +54,9 @@ git clone https://github.com/yourusername/epl-predictor.git
 cd epl-predictor
 
 
-
+2. Set up virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 
 
