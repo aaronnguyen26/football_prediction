@@ -53,7 +53,8 @@ df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
 df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
 
 # -----------------------------
-# 3. Load FBref Seasonal Team Stats
+# 3. Load FBref Seasonal Team Stats (from 2017 to 2024)
+# - 
 # -----------------------------
 fbref_data = {}
 fbref_dir = 'footballprediction/fbref_data'
