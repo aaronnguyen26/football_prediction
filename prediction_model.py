@@ -86,7 +86,7 @@ team_mapping = {
     'Aston Villa': 'Aston Villa'
 }
 
-for year in range(2017, 2025):
+for year in range(2017, 2023):
     path = os.path.join(fbref_dir, f'scrapped_team_stats_{year}.csv')
     if not os.path.exists(path):
         print(f"⚠️ FBref data not found for {year}: {path}")
