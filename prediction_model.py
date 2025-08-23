@@ -19,7 +19,7 @@ warnings.filterwarnings(
 )
 
 # -----------------------------
-# 2. Load and Validate Match Data
+# 2. Load and Validate Match Data (from 2017 to 2024)
 # -----------------------------
 csv_files = [
     'footballprediction/epl_data/epl2024.csv',
