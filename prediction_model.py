@@ -280,37 +280,18 @@ if len(X_test) == 0:
     _, _, score_y_away_train, score_y_away_test = train_test_split(X, score_y_away, test_size=0.2, random_state=42)
 
 # -----------------------------
-# 12. Model Training with Calibration
+# 12. Model Training
 # -----------------------------
-# Hold out part of training data for calibration
-calib_size = int(0.2 * len(X_train))
-X_calib = X_train[-calib_size:]
-y_calib = y_train[-calib_size:]
-X_train_fit = X_train[:-calib_size]
-y_train_fit = y_train[:-calib_size]
-
-# Train base model
-base_model = xgb.XGBClassifier(
-    n_estimators=100,
-    max_depth=4,
-    learning_rate=0.1,
-    random_state=42,
-    eval_metric='mlogloss'
-)
-base_model.fit(X_train_fit, y_train_fit)
-
-# Calibrate probabilities
-model = CalibratedClassifierCV(base_model, method='isotonic', cv='prefit')
-model.fit(X_calib, y_calib)
-
-# Train goal models
+# Train goal models (these will be our primary models now)
 home_goal_model = xgb.XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
 away_goal_model = xgb.XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
 home_goal_model.fit(score_X_train, score_y_home_train)
 away_goal_model.fit(score_X_train, score_y_away_train)
 
+print("✅ Goal prediction models trained successfully")
+
 # -----------------------------
-# 13. Prediction Helper Functions
+# 13. Consistent Prediction Helper Functions
 # -----------------------------
 def get_features_for_prediction(home_team, away_team, season):
     features = []
@@ -368,51 +349,137 @@ def get_features_for_prediction(home_team, away_team, season):
     return np.array([features])
 
 # -----------------------------
-# 14. Predict Match with Poisson
+# 14. Consistent Match Prediction with Poisson
 # -----------------------------
-def predict_match_proba(home_team, away_team, season=2024):
+def predict_match_consistent(home_team, away_team, season=2024):
+    """
+    Predict match using consistent approach:
+    1. Predict expected goals using regression models
+    2. Calculate outcome probabilities from Poisson distribution
+    3. Generate scorelines from same Poisson distribution
+    """
     features = get_features_for_prediction(home_team, away_team, season)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        proba = model.predict_proba(features)[0]
-        home_goals_pred = max(0, home_goal_model.predict(features)[0])
-        away_goals_pred = max(0, away_goal_model.predict(features)[0])
-
-    # Generate top scorelines using Poisson
+    
+    # Predict expected goals
+    home_goals_pred = max(0.1, home_goal_model.predict(features)[0])
+    away_goals_pred = max(0.1, away_goal_model.predict(features)[0])
+    
+    # Calculate outcome probabilities from Poisson distribution
+    max_goals = 8  # Calculate up to 8 goals for accuracy
+    
+    home_win_prob = 0
+    draw_prob = 0
+    away_win_prob = 0
+    
+    # Calculate all combinations and aggregate by outcome
+    for h in range(max_goals + 1):
+        for a in range(max_goals + 1):
+            prob = poisson.pmf(h, home_goals_pred) * poisson.pmf(a, away_goals_pred)
+            if h > a:
+                home_win_prob += prob
+            elif h == a:
+                draw_prob += prob
+            else:
+                away_win_prob += prob
+    
+    # Normalize to ensure probabilities sum to 1
+    total_prob = home_win_prob + draw_prob + away_win_prob
+    outcome_probs = np.array([home_win_prob, draw_prob, away_win_prob]) / total_prob
+    
+    # Generate detailed scorelines (up to 5-5 for display)
     scores = []
     for h in range(6):
         for a in range(6):
-            p = poisson.pmf(h, home_goals_pred) * poisson.pmf(a, away_goals_pred)
-            scores.append((h, a, p))
+            prob = poisson.pmf(h, home_goals_pred) * poisson.pmf(a, away_goals_pred)
+            scores.append((h, a, prob))
+    
+    # Sort by probability
     scores.sort(key=lambda x: -x[2])
-    top3_poisson = scores[:3]
-
-    # Fallback: H2H historical scores
+    top_scorelines = scores[:10]  # Top 10 most likely scorelines
+    
+    # Most likely single scoreline
+    most_likely_score = scores[0]
+    
+    # Get historical H2H data
     h2h = df[(df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)]
+    h2h_scorelines = None
     if len(h2h) > 0:
         h2h_scores = h2h.groupby(['FTHG', 'FTAG']).size().reset_index(name='count')
         h2h_scores['prob'] = h2h_scores['count'] / h2h_scores['count'].sum()
-        top3_h2h = h2h_scores.sort_values('prob', ascending=False).head(3)
-    else:
-        top3_h2h = None
-
-    return proba, top3_poisson[0], top3_poisson, top3_h2h, home_goals_pred, away_goals_pred
+        h2h_scorelines = h2h_scores.sort_values('prob', ascending=False).head(3)
+    
+    return {
+        'outcome_probs': outcome_probs,
+        'expected_goals': (home_goals_pred, away_goals_pred),
+        'most_likely_score': most_likely_score,
+        'top_scorelines': top_scorelines[:3],  # Top 3 for display
+        'all_scorelines': scores,
+        'h2h_scorelines': h2h_scorelines
+    }
 
 # -----------------------------
-# 15. Interactive CLI (Clean Output)
+# 15. Model Evaluation
+# -----------------------------
+def evaluate_model():
+    """Evaluate the consistency and performance of predictions"""
+    print("\n🔍 Evaluating model performance...")
+    
+    # Test on validation set
+    home_goals_pred = home_goal_model.predict(X_test)
+    away_goals_pred = away_goal_model.predict(X_test)
+    
+    # Calculate MAE for goal predictions
+    home_mae = mean_absolute_error(score_y_home_test, home_goals_pred)
+    away_mae = mean_absolute_error(score_y_away_test, away_goals_pred)
+    
+    print(f"Home Goals MAE: {home_mae:.3f}")
+    print(f"Away Goals MAE: {away_mae:.3f}")
+    
+    # Calculate outcome accuracy using Poisson-derived probabilities
+    correct_predictions = 0
+    total_predictions = len(X_test)
+    
+    for i in range(total_predictions):
+        hg_pred = max(0.1, home_goals_pred[i])
+        ag_pred = max(0.1, away_goals_pred[i])
+        
+        # Calculate outcome probabilities
+        home_win_prob = sum(poisson.pmf(h, hg_pred) * poisson.pmf(a, ag_pred) 
+                           for h in range(8) for a in range(8) if h > a)
+        draw_prob = sum(poisson.pmf(h, hg_pred) * poisson.pmf(h, ag_pred) 
+                       for h in range(8))
+        away_win_prob = sum(poisson.pmf(h, hg_pred) * poisson.pmf(a, ag_pred) 
+                           for h in range(8) for a in range(8) if a > h)
+        
+        # Predict outcome with highest probability
+        probs = [home_win_prob, draw_prob, away_win_prob]
+        predicted_outcome = np.argmax(probs)
+        actual_outcome = y_test.iloc[i]
+        
+        if predicted_outcome == actual_outcome:
+            correct_predictions += 1
+    
+    accuracy = correct_predictions / total_predictions
+    print(f"Outcome Prediction Accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)")
+
+# -----------------------------
+# 16. Interactive CLI (Enhanced)
 # -----------------------------
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("   ⚽ EPL Match Outcome & Score Predictor (FBref-Enhanced)")
-    print("="*60)
+    print("\n" + "="*70)
+    print("   ⚽ EPL Match Predictor - Consistent Poisson Model")
+    print("="*70)
+    
+    # Run model evaluation
+    evaluate_model()
     
     valid_teams = sorted(set(df['HomeTeam'].unique()) | set(df['AwayTeam'].unique()))
-    print("Available teams (enter exactly as shown):")
+    print(f"\nAvailable teams ({len(valid_teams)} teams):")
     print(", ".join(valid_teams))
     print(f"\nLoaded FBref data for seasons: {sorted(fbref_data.keys())}")
 
     while True:
-        print("\n" + "-"*50)
+        print("\n" + "-"*60)
         home_team = input("Enter Home Team (or 'exit' to quit): ").strip()
         if home_team.lower() == 'exit':
             print("👋 Exiting predictor. Goodbye!")
@@ -433,8 +500,14 @@ if __name__ == "__main__":
             season_input = input("Enter season (e.g., 2024) [default: 2024]: ").strip()
             season = int(season_input) if season_input else 2024
 
-            # Get prediction
-            proba, likely, top3, h2h_top3, hg, ag = predict_match_proba(home_team, away_team, season)
+            # Get prediction using consistent method
+            prediction = predict_match_consistent(home_team, away_team, season)
+            
+            proba = prediction['outcome_probs']
+            hg, ag = prediction['expected_goals']
+            likely = prediction['most_likely_score']
+            top3 = prediction['top_scorelines']
+            h2h_top3 = prediction['h2h_scorelines']
 
             # H2H Stats
             h2h = df[(df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)]
@@ -445,19 +518,37 @@ if __name__ == "__main__":
             print(f"\n📊 Head-to-Head: {len(h2h)} matches")
             print(f"   {home_team} wins: {h2h_hw} | Draws: {h2h_d} | {away_team} wins: {h2h_aw}")
 
-            print(f"\n🎯 Prediction for {home_team} vs {away_team} ({season}):")
-            print(f"   Home Win: {proba[0]*100:.1f}% | Draw: {proba[1]*100:.1f}% | Away Win: {proba[2]*100:.1f}%")
+            print(f"\n🎯 Consistent Prediction for {home_team} vs {away_team} ({season}):")
             print(f"   Expected Goals: {hg:.2f} - {ag:.2f}")
-            print(f"   Most Likely Score: {int(likely[0])}-{int(likely[1])} (prob: {likely[2]*100:.1f}%)")
+            print(f"   Outcome Probabilities (from Poisson):")
+            print(f"     Home Win: {proba[0]*100:.1f}%")
+            print(f"     Draw: {proba[1]*100:.1f}%")
+            print(f"     Away Win: {proba[2]*100:.1f}%")
+            print(f"   Most Likely Score: {int(likely[0])}-{int(likely[1])} ({likely[2]*100:.1f}%)")
 
-            print(f"\n🔝 Top 3 Likely Scorelines (Poisson):")
+            print(f"\n🔝 Top 3 Most Likely Scorelines:")
             for i, (h, a, p) in enumerate(top3):
-                print(f"   {i+1}. {int(h)}-{int(a)}: {p*100:.1f}%")
+                outcome = "Home Win" if h > a else "Draw" if h == a else "Away Win"
+                print(f"   {i+1}. {int(h)}-{int(a)}: {p*100:.1f}% ({outcome})")
 
             if h2h_top3 is not None and len(h2h_top3) > 0:
-                print(f"\n🔍 Top 3 H2H Scorelines:")
+                print(f"\n🔍 Historical H2H Scorelines:")
                 for _, row in h2h_top3.iterrows():
-                    print(f"   {int(row['FTHG'])}-{int(row['FTAG'])}: {row['prob']*100:.1f}%")
+                    print(f"   {int(row['FTHG'])}-{int(row['FTAG'])}: {row['prob']*100:.1f}% "
+                          f"({int(row['count'])} times)")
+
+            # Show model consistency
+            print(f"\n✅ Model Consistency Check:")
+            print(f"   All probabilities derived from same Poisson distribution")
+            print(f"   Expected goals: {hg:.2f} vs {ag:.2f}")
+            if hg > ag and proba[0] > max(proba[1], proba[2]):
+                print(f"   ✓ Higher expected goals → Higher win probability")
+            elif hg < ag and proba[2] > max(proba[0], proba[1]):
+                print(f"   ✓ Lower expected goals → Lower win probability") 
+            elif abs(hg - ag) < 0.3 and proba[1] > 0.25:
+                print(f"   ✓ Similar expected goals → Higher draw probability")
 
         except Exception as e:
             print(f"❌ Error during prediction: {e}")
+            import traceback
+            traceback.print_exc()
